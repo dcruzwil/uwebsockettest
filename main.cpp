@@ -1,78 +1,49 @@
-/* We simply call the root header file "App.h", giving you uWS::App and uWS::SSLApp */
 #include "App.h"
-#include <time.h>
-#include <iostream>
 
-uWS::App* globalApp;
+/* Note that uWS::SSLApp({options}) is the same as uWS::App() when compiled without SSL support */
+
+struct us_listen_socket_t* globalListenSocket;
 
 int main() {
-    /* ws->getUserData returns one of these */
-    struct PerSocketData {
-        std::string data;
-    };
+	/* Overly simple hello world app (SNI) */
+	uWS::SSLApp app = uWS::SSLApp({
+	  .key_file_name = "../misc/key.pem",
+	  .cert_file_name = "../misc/cert.pem",
+	  .passphrase = "1234"
+		}).missingServerName([&app](const char* hostname) {
 
-    PerSocketData ps;
-    ps.data = "Hello";
+			printf("We are missing server name: <%s>\n", hostname);
 
-    /* Keep in mind that uWS::SSLApp({options}) is the same as uWS::App() when compiled without SSL support.
-     * You may swap to using uWS:App() if you don't need SSL */
-    uWS::App app = uWS::App().ws<PerSocketData>("/*", {
-            /* Settings */
-            .compression = uWS::SHARED_COMPRESSOR,
-            .maxPayloadLength = 16 * 1024 * 1024,
-            .idleTimeout = 16,
-            .maxBackpressure = 1 * 1024 * 1024,
-            .closeOnBackpressureLimit = false,
-            .resetIdleTimeoutOnSend = false,
-            .sendPingsAutomatically = true,
-            /* Handlers */
-            .upgrade = nullptr,
-            .open = [](auto* ws) {
-                auto d = ws->getUserData();
-                std::cout << d->data << "\n";
-                /* Open event here, you may access ws->getUserData() which points to a PerSocketData struct */
-                ws->subscribe("broadcast");
-            },
-            .message = [](auto* ws, std::string_view message, uWS::OpCode opCode) {
-                std::cout << message << "\n";
-                auto d = ws->getUserData();
-                d->data = message;
-            },
-            .drain = [](auto*/*ws*/) {
-                /* Check ws->getBufferedAmount() here */
-            },
-            .ping = [](auto*/*ws*/, std::string_view) {
-                /* Not implemented yet */
-            },
-            .pong = [](auto*/*ws*/, std::string_view) {
-                /* Not implemented yet */
-            },
-            .close = [](auto*/*ws*/, int /*code*/, std::string_view /*message*/) {
-                /* You may access ws->getUserData() here */
-            }
-            }).listen(9001, [](auto* listen_socket) {
-                if (listen_socket) {
-                    std::cout << "Listening on port " << 9001 << std::endl;
-                }
-                });
+			/* Assume it is localhost, so add it */
+			app.addServerName("localhost", {
+				.key_file_name = "../misc/key.pem",
+				.cert_file_name = "../misc/cert.pem",
+				.passphrase = "1234"
+				});
 
-            struct us_loop_t* loop = (struct us_loop_t*)uWS::Loop::get();
-            struct us_timer_t* delayTimer = us_create_timer(loop, 0, 0);
+			}).get("/*", [](auto* res, auto*/*req*/) {
+				res->end("Hello world!");
+				}).get("/exit", [](auto* res, auto*/*req*/) {
+					res->end("Shutting down!");
+					/* We use this to check graceful closedown */
+					us_listen_socket_close(1, globalListenSocket);
+					}).listen(3000, [](auto* listenSocket) {
+						if (listenSocket) {
+							std::cout << "Listening on port " << 3000 << std::endl;
+							globalListenSocket = listenSocket;
+						}
+						else {
+							std::cout << "Failed to listen on port 3000" << std::endl;
+						}
+						});
 
-            // broadcast the unix time as millis every 8 millis
-            us_timer_set(delayTimer, [](struct us_timer_t*/*t*/) {
+					/* Let's add a wildcard SNI to begin with */
+					app.addServerName("*.google.*", {
+						.key_file_name = "../misc/key.pem",
+						.cert_file_name = "../misc/cert.pem",
+						.passphrase = "1234"
+						});
 
-                struct timespec ts;
-                timespec_get(&ts, TIME_UTC);
-
-                int64_t millis = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-
-                std::cout << "\rBroadcasting timestamp: " << millis; // << std::endl;
-
-                globalApp->publish("broadcast", std::string_view((char*)&millis, sizeof(millis)), uWS::OpCode::BINARY, false);
-                }, 5000, 1000);
-
-            globalApp = &app;
-
-            app.run();
+					app.run();
 }
+
